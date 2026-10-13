@@ -66,7 +66,13 @@ details .ctrl{margin-top:12px}
 @media (max-width:900px){
   main{flex-direction:column;padding:12px}
   .panel{width:100%;display:flex;flex-direction:column}
-  #resultCard{order:-1}
+  #resultCard{
+    order:-1;
+    position:sticky;top:8px;z-index:60;
+    background:var(--card);
+    box-shadow:0 3px 14px rgba(20,40,30,.12);
+    margin:8px 0 12px;
+  }
   .canvas-wrap{aspect-ratio:auto;height:300px}
   .hint{font-size:12.5px;line-height:1.6}
   .grp summary{font-size:15px;padding:12px 0}
@@ -82,6 +88,7 @@ details .ctrl{margin-top:12px}
 <main>
   <section class="stage">
     <div class="canvas-wrap"><canvas id="cv"></canvas></div>
+    <img id="logoImg" src="毽球协会图标_水印.png" alt="" style="display:none">
     <div class="legend" id="legend"></div>
   </section>
   <aside class="panel">
@@ -93,9 +100,14 @@ details .ctrl{margin-top:12px}
         <div class="hint">移动髋点：大腿、小腿、脚面整体前后平移，太靠后会下网。</div>
       </div>
       <div class="ctrl">
-        <label>大腿角度（相对垂线） <span class="val" id="vLegAng">24°</span></label>
-        <input type="range" id="rLegAng" min="0" max="60" step="1" value="24">
-        <div class="hint">0° 大腿竖直向下；角度增大膝盖绕髋向前摆（大腿长度固定 0.25 m）。</div>
+        <label>大腿抬起角度（相对垂线） <span class="val" id="vLegAng">45°</span></label>
+        <input type="range" id="rLegAng" min="0" max="60" step="1" value="45">
+        <div class="hint">准备时大腿竖直（0°），摆腿时绕髋抬起。抬得不够脚面扫不到球。</div>
+      </div>
+      <div class="ctrl">
+        <label>膝盖伸直角度（大腿小腿夹角） <span class="val" id="vBetaSet">90°</span></label>
+        <input type="range" id="rBetaSet" min="0" max="90" step="1" value="90">
+        <div class="hint">0° 折叠垂直、90° 伸直成一直线。击球瞬间最多伸直（90°），膝盖越弯越扫不到球（约 83° 以下踢空）。</div>
       </div>
     </details>
     <details class="grp" open>
@@ -107,13 +119,13 @@ details .ctrl{margin-top:12px}
       </div>
       <div class="ctrl">
         <label>摆腿力度 <span class="val" id="vPower">100%</span></label>
-        <input type="range" id="rPower" min="60" max="140" step="2" value="100">
+        <input type="range" id="rPower" min="60" max="300" step="2" value="100">
         <div class="hint">改变小腿（木棍）绕膝关节摆动的角速度。</div>
       </div>
       <div class="ctrl">
-        <label>球相对膝盖位置 <span class="val" id="vBallRel">0.50 m</span></label>
-        <input type="range" id="rBallRel" min="0.35" max="0.68" step="0.01" value="0.50">
-        <div class="hint">球在膝盖前方的水平距离：太靠后打不起来，越靠前球越高远。踢完自动归位。</div>
+        <label>球相对膝盖位置 <span class="val" id="vBallRel">0.60 m</span></label>
+        <input type="range" id="rBallRel" min="0.40" max="0.75" step="0.01" value="0.60">
+        <div class="hint">球在准备膝前方的水平距离：太靠后踢空或下网，越靠前越高远。踢完自动归位。</div>
       </div>
     </details>
     <div class="btns">
@@ -159,31 +171,32 @@ const RETURN_DELAY = 1.2;                // 踢完后自动归位延时（s）
 // 大腿两端：髋（控整体位移）、膝（控小腿脚面位置）
 const getHip=()=>({x:P.hipX,y:HIP_Y});
 // 膝盖 = 髋 + 大腿按 legAng 旋转（0°竖直向下，增大向前/屏幕顺时针）
-const getKnee=()=>{
-  const a=P.legAng*Math.PI/180;
+// 大腿角 theta 时的膝盖位置（准备 theta=0；击球时 theta=P.legAng）
+const kneeAt=theta=>{
+  const a=theta*Math.PI/180;
   return {x:P.hipX+THIGH_L*Math.sin(a), y:HIP_Y-THIGH_L*Math.cos(a)};
 };
+const getKnee=()=>kneeAt(P.legAng);
 const BR = 0.055;                        // 球半径
-const PHI0 = -78*Math.PI/180;            // 后摆起始角（相对竖直向下）
-const PHI1 =  78*Math.PI/180;            // 随挥结束角
-const PHI_HIT = 44*Math.PI/180;          // 预期触球时的小腿角
-const SWING_T = 0.34;                    // 摆腿总时长（力度100%）
+const SWING_T = 0.30;                    // 摆腿总时长（力度100%）
+const PREP_PHI = -90*Math.PI/180;        // 准备姿态：大腿竖直、小腿折叠 → 小腿水平向后
 const E_REST = 0.4, MU_FRIC = 0.15;      // 恢复系数、摩擦系数
 const TRAIL_COLORS = ['#3b7de8','#7a4ec9','#17a2a2','#c94f8d','#b9821c','#5f9e3b'];
 const CUR_COLOR = '#e8743b';
 
 /* ================= 状态 ================= */
 const S = {
-  mode:'idle', t:0, phi:PHI0, omega:0,
+  mode:'idle', t:0, theta:0, beta:0, phi:PREP_PHI, omega:0,
+  knee:{x:-0.60,y:0.60},            // 准备膝（θ=0：髋正下方，hipY-THIGH_L）
   ball:{x:0,y:BALL_Y,vx:0,vy:0},
   hit:false, trail:[], trails:[],
   netClear:null, apex:0, landed:null, flightT:0,
-  netHit:false,
+  netHit:false, footFault:false,
   colorSeq:['#e8743b','#2f6fed','#1f9e55','#d11f72','#8b44c8','#e0a32e','#0fb5c9'],
   colorIdx:0, curColor:CUR_COLOR
 };
 const P = {angle:90, power:100, drag:0.8,
-  hipX:-0.60, legAng:24, ballRel:0.50};
+  hipX:-0.60, legAng:45, betaSet:90, ballRel:0.60};
 
 /* ================= 运动学 ================= */
 // 小腿方向（膝→踝）d1；木板（脚背）：delta=0 与小腿成一直线（踢正步绷直），
@@ -201,7 +214,7 @@ function legPose(phi, angDeg, knee){
 }
 // 球的起始位置：高度固定，水平 = 膝盖 + 相对距离
 function ballStart(){
-  const k=getKnee();
+  const k=kneeAt(0);                      // 准备姿态膝（大腿竖直）
   return {x:k.x+P.ballRel, y:BALL_Y, vx:0, vy:0};
 }
 // 绕膝关节以角速度 w 转动时，世界点 p 的速度
@@ -217,7 +230,7 @@ function closestOnSeg(p,a,b){
 /* ================= 碰撞 ================= */
 function tryHit(){
   if(S.hit) return;
-  const k=getKnee();
+  const k=S.knee;                         // 摆动中当前膝位置
   const {d2,ank,toe}=legPose(S.phi,P.angle,k);
   const c=closestOnSeg(S.ball,ank,toe);
   let nx=S.ball.x-c.x, ny=S.ball.y-c.y;
@@ -240,13 +253,15 @@ function tryHit(){
 
 /* ================= 实时演算：预测出射速度（用于触球方向箭头） ================= */
 function predictHit(){
-  const k=getKnee();
   const bx=S.ball.x, by=S.ball.y;
   const Tsw=SWING_T*(100/P.power);
-  for(let i=0;i<=1200;i++){
-    const u=i/1200;
-    const phi=PHI0+(PHI1-PHI0)*u*u;
-    const w=(PHI1-PHI0)/Tsw*2*u;
+  const N=1500;
+  for(let i=0;i<=N;i++){
+    const u=i/N;
+    const theta=P.legAng*u*u, beta=P.betaSet*u*u;
+    const phi=(theta-90+beta)*Math.PI/180;
+    const w=(P.legAng+P.betaSet)*Math.PI/180/Tsw*2*u;
+    const k=kneeAt(theta);
     const {d2,ank,toe}=legPose(phi,P.angle,k);
     const c=closestOnSeg({x:bx,y:by},ank,toe);
     let nx=bx-c.x, ny=by-c.y; const d=Math.hypot(nx,ny);
@@ -298,15 +313,18 @@ function flyStep(dt){
 function startServe(){
   if(S.mode==='swing'||S.mode==='flight') return;
   S.returnToken=(S.returnToken||0)+1;   // 取消任何待执行的归位
-  Object.assign(S,{mode:'swing',t:0,phi:PHI0,omega:0,hit:false,
-    trail:[],netClear:null,apex:0,landed:null,flightT:0,netHit:false});
+  Object.assign(S,{mode:'swing',t:0,theta:0,beta:0,phi:PREP_PHI,omega:0,hit:false,
+    knee:kneeAt(0),
+    trail:[],netClear:null,apex:0,landed:null,flightT:0,netHit:false,
+    footFault:getHip().x>0});           // 髋垂线越过底线（进入场内）= 踩界
   S.ball=ballStart();                   // 球归位到滑块指定位置
   S.curColor=S.colorSeq[S.colorIdx%S.colorSeq.length]; S.colorIdx++;
   setVerdict('摆腿中…','');
 }
 function finishServe(){
   let v,cls;
-  if(S.netHit){v='下网';cls='bad';}
+  if(S.footFault){v='踩界 · 发球违例';cls='bad';}
+  else if(S.netHit){v='下网';cls='bad';}
   else if(S.landed>BASE_R){v='出界';cls='bad';}
   else if(S.landed<=NET_X){v='未过网';cls='bad';}
   else {v='界内 · 发球成功';cls='good';}
@@ -321,16 +339,17 @@ function finishServe(){
   const tok=S.returnToken;
   setTimeout(()=>{
     if(tok!==S.returnToken||S.mode!=='done')return;
-    S.mode='idle';S.phi=PHI0;S.omega=0;S.hit=false;
-    S.ball=ballStart();
+    S.mode='idle';S.theta=0;S.beta=0;S.phi=PREP_PHI;S.omega=0;S.hit=false;
+    S.knee=kneeAt(0);S.ball=ballStart();
   },RETURN_DELAY*1000);
 }
 function resetAll(){
   S.returnToken=(S.returnToken||0)+1;
-  S.mode='idle'; S.phi=PHI0; S.omega=0; S.trail=[]; S.trails=[]; S.colorIdx=0;
-  S.curColor=CUR_COLOR;
+  S.mode='idle'; S.theta=0;S.beta=0; S.phi=PREP_PHI; S.omega=0;
+  S.trail=[]; S.trails=[]; S.colorIdx=0;
+  S.curColor=CUR_COLOR; S.knee=kneeAt(0);
   S.ball=ballStart();
-  S.hit=false;S.netClear=null;S.apex=0;S.landed=null;S.netHit=false;
+  S.hit=false;S.netClear=null;S.apex=0;S.landed=null;S.netHit=false;S.footFault=false;
   setVerdict('调整参数后点击「发球」','');
   document.getElementById('sAng').textContent='—';
   document.getElementById('sSpd').textContent='—';
@@ -353,8 +372,11 @@ function loop(now){
     for(let i=0;i<N && S.mode==='swing';i++){
       S.t+=h;
       const u=Math.min(S.t/Tsw,1);
-      S.phi=PHI0+(PHI1-PHI0)*u*u;      // ease-in：加速摆动
-      S.omega=(PHI1-PHI0)/Tsw*2*u;
+      // 大腿、小腿联动 ease-in：θ（大腿抬起）、β（膝盖伸直）
+      S.theta=P.legAng*u*u; S.beta=P.betaSet*u*u;
+      S.phi=(S.theta-90+S.beta)*Math.PI/180;
+      S.omega=(P.legAng+P.betaSet)*Math.PI/180/Tsw*2*u;
+      S.knee=kneeAt(S.theta);
       tryHit();
       if(S.hit){S.mode='flight';}
       else if(u>=1){S.mode='idle';setVerdict('未踢中球，重试','warn');}
@@ -373,13 +395,13 @@ function loop(now){
 
 /* ================= 画布与坐标变换 ================= */
 const cv=document.getElementById('cv'), ctx=cv.getContext('2d');
-const XMIN=-2.3, XMAX=14.3, YMIN=0, YMAX=5.2;
+const XMIN=-2.3, XMAX=14.3, YMIN=-0.45, YMAX=5.4;
 let W=0,H=0,sc=1,ox=0,oy=0,cRect=null;
 function resize(){
   const dpr=window.devicePixelRatio||1;
   const wrap=cv.parentElement;
   if(window.matchMedia('(min-width:901px)').matches){
-    wrap.style.height=(wrap.getBoundingClientRect().width/(16.6/5.2)+20)+'px';
+    wrap.style.height=(wrap.getBoundingClientRect().width/(16.6/5.85)+20)+'px';
   } else { wrap.style.height=''; }
   const r=wrap.getBoundingClientRect();
   W=Math.max(200,r.width-20); H=Math.max(120,r.height-20);
@@ -404,19 +426,33 @@ function draw(){
   ctx.fillStyle='#eef3f1';
   ctx.fillRect(cRect.x,cRect.y,cRect.w,cRect.h);   // 场景天空底
   drawGround(); drawNet(); drawScale();
+  drawWatermark();
   for(const tr of S.trails) drawTrail(tr,'#00000022',tr.color);
   if(S.trail.length) drawTrail({pts:S.trail,netClear:S.netClear,netHit:S.netHit,landed:S.landed},'#00000022',S.curColor);
   drawLeg(); drawBall(); drawLabels();
 }
+/* ================= 协会图标水印（透明 PNG，见 毽球协会图标_水印.png） ================= */
+function drawWatermark(){
+  const img=document.getElementById('logoImg');
+  if(!img.complete||!img.naturalWidth)return;
+  const th=cRect.h*0.72, tw=th*img.naturalWidth/img.naturalHeight;
+  const cx=cRect.x+cRect.w/2, cy=cRect.y+cRect.h/2+8;
+  ctx.save();ctx.globalAlpha=0.16;
+  ctx.drawImage(img,cx-tw/2,cy-th/2,tw,th);
+  ctx.restore();
+}
 function drawGround(){
-  // 场外（发球站位区）
+  // 地下土壤（地面 y=0 到 YMIN）
+  ctx.fillStyle='#74624a';
+  ctx.fillRect(X(XMIN),Y(0),X(XMAX)-X(XMIN),Y(YMIN)-Y(0));
+  // 地面表层（厚 0.18m）：场外米色、场内绿色
+  const DG=0.18, hSurf=Y(-DG)-Y(0);
   ctx.fillStyle='#cdbd9c';
-  ctx.fillRect(X(XMIN),Y(0),X(0)-X(XMIN),Y(YMIN)-Y(0));
-  // 场地
+  ctx.fillRect(X(XMIN),Y(0),X(0)-X(XMIN),hSurf);
   ctx.fillStyle='#0e6b4d';
-  ctx.fillRect(X(0),Y(0),X(13.4)-X(0),Y(0)-Y(0));
+  ctx.fillRect(X(0),Y(0),X(13.4)-X(0),hSurf);
   ctx.fillStyle='#0a523c';
-  ctx.fillRect(X(0),Y(0),X(13.4)-X(0),4);
+  ctx.fillRect(X(0),Y(-DG),X(13.4)-X(0),4);
   // 地面分界线（底线）
   ctx.strokeStyle='#f4f7f5'; ctx.lineWidth=2.5;
   for(const x of [0,13.4]){
@@ -481,10 +517,23 @@ function drawTrail(tr,shadow,color){
 }
 function font11(){ctx.font='11px "Noto Sans SC",sans-serif';}
 function drawLeg(){
-  const k=getKnee(), h=getHip();
-  const drawPhi=S.mode==='idle'?PHI_HIT:S.phi;  // 待机直接展示触球瞬间姿态
+  const h=getHip();
+  // 待机：展示击球瞬间（滑块设定的终点姿态），便于确认身体姿态；
+  // 点击发球后 mode='swing'，S 从准备姿态（θ=0、β=0 折叠）开始运动到击球瞬间
+  const k=S.mode==='idle'?getKnee():S.knee;
+  const drawPhi=S.mode==='idle'
+    ?(P.legAng-90+P.betaSet)*Math.PI/180
+    :S.phi;
   const pose=legPose(drawPhi,P.angle,k);
   const a=pose.ank,t=pose.toe;
+  // 髋垂线虚线（髋 → 地面）：髋在底线外灰色，进入场内（x>0）红色警示
+  const fault=h.x>0;
+  ctx.save();ctx.setLineDash([6,5]);ctx.lineWidth=1.6;
+  ctx.strokeStyle=fault?'#d64545':'#8a9a93';
+  ctx.beginPath();ctx.moveTo(X(h.x),Y(h.y));ctx.lineTo(X(h.x),Y(0));ctx.stroke();
+  ctx.restore();
+  if(fault){ctx.fillStyle='#d64545';font11();ctx.textAlign='center';
+    ctx.fillText('踩界',X(h.x),Y(0)-6);}
   // 大腿（髋 → 膝）
   ctx.strokeStyle='#9aa7a2';ctx.lineWidth=9;ctx.lineCap='round';
   ctx.beginPath();ctx.moveTo(X(h.x),Y(h.y));ctx.lineTo(X(k.x),Y(k.y));ctx.stroke();
@@ -599,6 +648,11 @@ document.getElementById('rLegAng').addEventListener('input',e=>{
   document.getElementById('vLegAng').textContent=e.target.value+'°';
   onBodyChange();
 });
+document.getElementById('rBetaSet').addEventListener('input',e=>{
+  P.betaSet=+e.target.value;
+  document.getElementById('vBetaSet').textContent=e.target.value+'°';
+  draw();
+});
 document.getElementById('rBallRel').addEventListener('input',e=>{
   P.ballRel=+e.target.value;
   document.getElementById('vBallRel').textContent=(+e.target.value).toFixed(2)+' m';
@@ -612,6 +666,8 @@ document.getElementById('btnReset').addEventListener('click',resetAll);
 /* ================= 启动 ================= */
 resize();
 renderLegend();
+const logoImg=document.getElementById('logoImg');
+logoImg.addEventListener('load',()=>draw());
 requestAnimationFrame(loop);
 </script>
 </body>
