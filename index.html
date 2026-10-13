@@ -86,17 +86,21 @@ details .ctrl{margin-top:12px}
 .rule-tbl td:first-child{white-space:nowrap;width:38%;color:var(--ink);font-weight:500}
 .rule-ref{color:var(--ink2);font-size:12.5px}
 @media (max-width:900px){
-  main{flex-direction:column;padding:12px}
-  .panel{width:100%;display:flex;flex-direction:column}
-  #resultCard{order:-1;margin:8px 0 12px}
-  /* 可视化画布吸顶：调滑块时画面固定在顶部 */
+  /* 画布固定、调节区独立滚动：整页不滚动，只有下方 panel 内部滚动 */
+  body{height:100vh;overflow:hidden}
+  main{flex-direction:column;padding:10px;overflow:hidden}
+  .stage{flex:0 0 auto;gap:8px;min-height:0}
   .canvas-wrap{
     aspect-ratio:auto;height:300px;
-    position:sticky;top:0;z-index:60;
-    background:var(--card);
-    border-radius:12px;
-    box-shadow:0 3px 14px rgba(20,40,30,.10);
+    position:static;
+    box-shadow:0 2px 10px rgba(20,40,30,.08);
   }
+  .panel{
+    width:100%;flex:1 1 auto;min-height:0;
+    display:flex;flex-direction:column;
+    overflow-y:auto;-webkit-overflow-scrolling:touch;
+  }
+  #resultCard{order:-1;margin:8px 0 12px}
   .hint{font-size:12.5px;line-height:1.6}
   .grp summary{font-size:15px;padding:12px 0}
   input[type=range]{height:28px}
