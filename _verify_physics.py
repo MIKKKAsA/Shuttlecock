@@ -10,7 +10,7 @@ LEG_ANG = 45                      # 击球时大腿相对髋垂线角度（°）
 # ===== 膝盖弯曲（驱动击球瞬间）=====
 BETA_SET = 90                     # 击球时膝盖角：0=折叠垂直，90=伸直直线（不可超过）；准备时为 0
 # ===== 腿/板尺寸 =====
-L1, L2 = 0.55, 0.24
+L1, L2 = 0.40, 0.24
 BOARD_T, BR = 0.006, 0.055
 T = 0.30
 E_REST, MU = 0.4, 0.15
@@ -77,19 +77,20 @@ def simulate(ang=90,power=100,ball_rel=BALL_REL,drag=DRAG,beta_set=None,
     if pr is None: return "未踢中"
     vx,vy,phi,beta=pr
     x,y=bx,by
-    h=1/2400;netclear=None;nethit=False;apex=y;ft=0
+    h=1/2400;netclear=None;netv=None;nethit=False;apex=y;ft=0
     while True:
         vx+=-drag*vx*h;vy+=(-G-drag*vy)*h
         px,py=x,y;x+=vx*h;y+=vy*h;ft+=h;apex=max(apex,y)
         if netclear is None and px<NET_X and x>=NET_X:
             uu=(NET_X-px)/(x-px);yat=py+uu*(y-py)
             netclear=yat-NET_H
+            netv=math.hypot(vx,vy)
             if yat-BR<=NET_H:nethit=True
         if nethit:x=NET_X;vx=0;vy=-0.6
         if y<=BR:landed=x;break
     verdict='下网' if nethit else('出界' if landed>13.4 else('未过网' if landed<=NET_X else '界内'))
     pv=math.hypot(pr[0],pr[1]);pa=math.degrees(math.atan2(pr[1],pr[0]))
-    return dict(pred_ang=pa,pred_spd=pv,netclear=netclear,apex=apex,
+    return dict(pred_ang=pa,pred_spd=pv,netclear=netclear,netv=netv,apex=apex,
                 landed=landed,land_from_net=landed-NET_X,flight_t=ft,
                 verdict=verdict,hit_beta=beta)
 
@@ -137,3 +138,29 @@ for brp in [0.32,0.45,0.50,0.55,0.60]:
     if isinstance(r,str):print(f"rel{brp:.2f}: {r}");continue
     nc='  —  ' if r['netclear'] is None else f"{r['netclear']:+.2f}"
     print(f"rel{brp:.2f}: {r['verdict']} 出射{r['pred_ang']:.1f} 速{r['pred_spd']:.1f} 网{nc} 距网{r['land_from_net']:.2f} apex{r['apex']:.2f}")
+
+# 复刻 JS 评分公式，扫描找前场/后场好球
+def score_of(r):
+    if r['verdict']!='界内':return None
+    d=r['land_from_net']; t=d/6.7
+    landX=abs(d-3.35)/3.35
+    v=max(0,min(1,(r['netv']-3)/10))
+    vMatch=t*v+(1-t)*(1-v)
+    netH=max(0,min(1,1-(r['netclear'] or 0)/1.0))
+    return round(100*(0.45*landX+0.35*vMatch+0.20*netH))
+print('--- 扫描前场/后场高分球 ---')
+best=[]
+for pw in [60,70,80,100,130,160,200,250]:
+  for brp in [0.40,0.45,0.50,0.55,0.60,0.65,0.70]:
+    for la in [30,40,45,55]:
+      for ang in [30,50,70,90]:
+        r=simulate(ang=ang,power=pw,ball_rel=brp,theta_set=la)
+        if isinstance(r,str):continue
+        s=score_of(r)
+        if s is not None:best.append((s,pw,brp,la,ang,r['land_from_net'],r['netv'],r['netclear']))
+best.sort(reverse=True)
+for row in best[:8]:
+  print(f"评分{row[0]:3d} power{row[1]} rel{row[2]} leg{row[3]} angle{row[4]} 距网{row[5]:.2f} 过网速{row[6]:.1f} 网余{row[7]:+.2f}")
+front=[x for x in best if x[5]<1.5]; back=[x for x in best if x[5]>5.2]
+if front:print('前场最佳',front[0])
+if back:print('后场最佳',back[0])
