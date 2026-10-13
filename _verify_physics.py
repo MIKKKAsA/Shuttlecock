@@ -14,9 +14,8 @@ L1, L2 = 0.40, 0.24
 BOARD_T, BR = 0.006, 0.055
 T = 0.30
 E_REST, MU = 0.4, 0.15
-DRAG = 0.8
-BALL_Y = 0.25
-BALL_REL = 0.60
+DRAG = 0.6
+BOARD_S = 0.20                     # 球沿脚面距脚踝距离（0=踝→0.24=脚尖）
 
 def knee():
     a=math.radians(LEG_ANG)
@@ -32,9 +31,19 @@ def phi_abs(theta,beta):           # 小腿绝对方向（相对竖直）= 大�
 def pose(phi, ang, kx, ky):
     d1=(math.sin(phi),-math.cos(phi))
     d2=rot(d1, math.radians(90-ang))
+    nrm=rot(d2, math.pi/2)
     ank=(kx+L1*d1[0], ky+L1*d1[1])
     toe=(ank[0]+L2*d2[0], ank[1]+L2*d2[1])
-    return d2,ank,toe
+    return d2,nrm,ank,toe
+
+# 球的起始位置：贴在击球姿态脚面表面
+def ball_start(ang,beta_set,theta_set):
+    phi=phi_abs(theta_set,beta_set)
+    kx=HIP_X+THIGH_L*math.sin(math.radians(theta_set))
+    ky=HIP_Y-THIGH_L*math.cos(math.radians(theta_set))
+    d2,nrm,ank,toe=pose(phi,ang,kx,ky)
+    p=(ank[0]+BOARD_S*d2[0],ank[1]+BOARD_S*d2[1])
+    return (p[0]+nrm[0]*BR,p[1]+nrm[1]*BR)
 
 def closest(p,a,b):
     dx,dy=b[0]-a[0],b[1]-a[1]; l2=dx*dx+dy*dy
@@ -53,7 +62,7 @@ def predict(ang,power,bx,by,kx,ky,beta_set,theta_set):
         phi=phi_abs(theta,beta)
         kx=HIP_X+THIGH_L*math.sin(math.radians(theta))
         ky=HIP_Y-THIGH_L*math.cos(math.radians(theta))
-        d2,ank,toe=pose(phi,ang,kx,ky)
+        d2,nrm,ank,toe=pose(phi,ang,kx,ky)
         c=closest((bx,by),ank,toe)
         d=math.hypot(bx-c[0],by-c[1])
         if d<=BR+BOARD_T:
@@ -67,13 +76,14 @@ def predict(ang,power,bx,by,kx,ky,beta_set,theta_set):
                 return vx,vy,phi,beta
     return None
 
-def simulate(ang=90,power=100,ball_rel=BALL_REL,drag=DRAG,beta_set=None,
+def simulate(ang=90,power=100,board_s=BOARD_S,drag=DRAG,beta_set=None,
              theta_set=None):
+    global BOARD_S
     if beta_set is None:beta_set=BETA_SET
     if theta_set is None:theta_set=LEG_ANG
-    kx0,ky0=HIP_X,HIP_Y-THIGH_L          # 准备姿态膝（大腿竖直）
-    bx,by=kx0+ball_rel,BALL_Y
-    pr=predict(ang,power,bx,by,kx0,ky0,beta_set,theta_set)
+    BOARD_S=board_s
+    bx,by=ball_start(ang,beta_set,theta_set)
+    pr=predict(ang,power,bx,by,HIP_X,HIP_Y-THIGH_L,beta_set,theta_set)
     if pr is None: return "未踢中"
     vx,vy,phi,beta=pr
     x,y=bx,by
@@ -103,43 +113,15 @@ print('--- 摆腿目标膝盖角 BETA_SET ---')
 for bs in [60,70,80,85,90]:
     r=simulate(beta_set=bs)
     if isinstance(r,str):print(f"beta{bs}: {r}");continue
-    print(f"set{bs}: {r['verdict']} 击球β{r['hit_beta']:.1f} 出射{r['pred_ang']:.1f} 速{r['pred_spd']:.1f} 网{r['netclear']:+.2f} 距网{r['land_from_net']:.2f}")
+    nc='  —  ' if r['netclear'] is None else f"{r['netclear']:+.2f}"
+    dn='  —  ' if r['land_from_net'] is None else f"{r['land_from_net']:.2f}"
+    print(f"set{bs}: {r['verdict']} 击球β{r['hit_beta']:.1f} 出射{r['pred_ang']:.1f} 速{r['pred_spd']:.1f} 网{nc} 距网{dn}")
 print('--- 整体位移 HIP_X ---')
 for hx in [-1.2,-0.9,-0.6,-0.3,0.0]:
     HIP_X=hx; r=simulate()
     if isinstance(r,str):print(f"hip{hx}: {r}");continue
     print(f"hip{hx:+.2f}: {r['verdict']} 网{r['netclear']:+.2f} 距网{r['land_from_net']:.2f}")
 HIP_X=-0.60
-print('--- 大腿角度 LEG_ANG (rel0.32) ---')
-for la in [24,32,40,48,55]:
-    LEG_ANG=la; r=simulate()
-    if isinstance(r,str):print(f"ang{la}: {r}");continue
-    nc='  —  ' if r['netclear'] is None else f"{r['netclear']:+.2f}"
-    print(f"leg{la:2d}°: {r['verdict']} 击球β{r['hit_beta']:.1f} 出射{r['pred_ang']:.1f} 网{nc} 距网{r['land_from_net']:.2f}")
-LEG_ANG=24
-def mindist(ang,beta_set,theta_set):
-    N=1500;md=9
-    bx=HIP_X+BALL_REL;by=BALL_Y
-    for i in range(N+1):
-        u=i/N;theta=theta_set*u*u;beta=beta_set*u*u
-        phi=phi_abs(theta,beta)
-        kx=HIP_X+THIGH_L*math.sin(math.radians(theta))
-        ky=HIP_Y-THIGH_L*math.cos(math.radians(theta))
-        d2,ank,toe=pose(phi,ang,kx,ky)
-        c=closest((bx,by),ank,toe)
-        md=min(md,math.hypot(bx-c[0],by-c[1]))
-    return md
-print('--- 诊断：β_set 对板-球最小距离 ---')
-for bs in [70,75,80,85,90]:
-    print(f"set{bs}: minDist={mindist(90,bs,45):.3f} (阈值{BR+BOARD_T:.3f})")
-print('--- 球相对膝位置 ---')
-for brp in [0.32,0.45,0.50,0.55,0.60]:
-    r=simulate(ball_rel=brp)
-    if isinstance(r,str):print(f"rel{brp:.2f}: {r}");continue
-    nc='  —  ' if r['netclear'] is None else f"{r['netclear']:+.2f}"
-    print(f"rel{brp:.2f}: {r['verdict']} 出射{r['pred_ang']:.1f} 速{r['pred_spd']:.1f} 网{nc} 距网{r['land_from_net']:.2f} apex{r['apex']:.2f}")
-
-# 复刻 JS 评分公式，扫描找前场/后场好球
 def score_of(r):
     if r['verdict']!='界内':return None
     d=r['land_from_net']; t=d/6.7
@@ -148,19 +130,36 @@ def score_of(r):
     vMatch=t*v+(1-t)*(1-v)
     netH=max(0,min(1,1-(r['netclear'] or 0)/1.0))
     return round(100*(0.45*landX+0.35*vMatch+0.20*netH))
-print('--- 扫描前场/后场高分球 ---')
+
+print('--- 网格扫描：最高能拿多少分 ---')
 best=[]
-for pw in [60,70,80,100,130,160,200,250]:
-  for brp in [0.40,0.45,0.50,0.55,0.60,0.65,0.70]:
-    for la in [30,40,45,55]:
-      for ang in [30,50,70,90]:
-        r=simulate(ang=ang,power=pw,ball_rel=brp,theta_set=la)
+for pw in [60,80,100,120,150,180,220,260,300]:
+  for bs in [0,0.04,0.08,0.12,0.16,0.20,0.24]:
+    for ang in [0,20,40,60,80,90]:
+      for th in [0,20,35,45,55,60]:
+        r=simulate(ang=ang,power=pw,board_s=bs,theta_set=th,beta_set=90)
         if isinstance(r,str):continue
-        s=score_of(r)
-        if s is not None:best.append((s,pw,brp,la,ang,r['land_from_net'],r['netv'],r['netclear']))
+        sc=score_of(r)
+        if sc is not None:
+          best.append((sc,pw,bs,ang,th,r['land_from_net'],r['netv'],r['netclear']))
 best.sort(reverse=True)
-for row in best[:8]:
-  print(f"评分{row[0]:3d} power{row[1]} rel{row[2]} leg{row[3]} angle{row[4]} 距网{row[5]:.2f} 过网速{row[6]:.1f} 网余{row[7]:+.2f}")
+print('得分最高的 10 组：')
+for row in best[:10]:
+  print(f"  评分{row[0]:3d} 力度{row[1]} 球位{row[2]:.2f} 脚面角{row[3]} 大腿角{row[4]} 距网{row[5]:.2f} 过网速{row[6]:.1f} 网余{row[7]:+.2f}")
 front=[x for x in best if x[5]<1.5]; back=[x for x in best if x[5]>5.2]
-if front:print('前场最佳',front[0])
-if back:print('后场最佳',back[0])
+if front:print('前场最高:',front[0])
+if back:print('后场最高:',back[0])
+
+print('--- 局部细化（后场最优附近）---')
+fine=[]
+for pw in range(180,271,10):
+  for bs in [0.0,0.02,0.04,0.06,0.08]:
+    for ang in [84,88,90]:
+      for th in [12,16,20,24,28]:
+        r=simulate(ang=ang,power=pw,board_s=bs,theta_set=th,beta_set=90)
+        if isinstance(r,str):continue
+        sc=score_of(r)
+        if sc is not None:fine.append((sc,pw,bs,ang,th,r['land_from_net'],r['netv'],r['netclear']))
+fine.sort(reverse=True)
+for row in fine[:5]:
+  print(f"  评分{row[0]:3d} 力度{row[1]} 球位{row[2]:.2f} 脚面{row[3]} 大腿{row[4]} 距网{row[5]:.2f} 过网速{row[6]:.1f} 网余{row[7]:+.2f}")

@@ -151,14 +151,14 @@ details .ctrl{margin-top:12px}
         <div class="hint">改变小腿（木棍）绕膝关节摆动的角速度。</div>
       </div>
       <div class="ctrl">
-        <label>球位 · 水平（距膝盖） <span class="val" id="vBallRel">0.60 m</span></label>
-        <input type="range" id="rBallRel" min="0.35" max="0.85" step="0.01" value="0.60">
-        <div class="hint">球在准备膝前方的水平距离。太靠后踢空或下网，越靠前越高远。</div>
+        <label>球位 · 沿脚面（0 脚踝 → 脚尖） <span class="val" id="vBoardS">0.20 m</span></label>
+        <input type="range" id="rBoardS" min="0" max="0.24" step="0.01" value="0.20">
+        <div class="hint">球贴在脚面表面：0 为脚踝，增大往脚尖移动。靠近脚尖的远端是甜点区，线速度更大、击球更有力；脚踝附近则更轻、更贴网。</div>
       </div>
       <div class="ctrl">
-        <label>球位 · 离地高度 <span class="val" id="vBallH">0.25 m</span></label>
-        <input type="range" id="rBallH" min="0.05" max="0.55" step="0.01" value="0.25">
-        <div class="hint">球的垂直高度。与水平滑块共同构成 0.5 m × 0.5 m 的正方形摆球区域。踢完自动归位。</div>
+        <label>触球卸力（0 踢击 → 100 轻吊） <span class="val" id="vSoft">0%</span></label>
+        <input type="range" id="rSoft" min="0" max="100" step="2" value="0">
+        <div class="hint">模拟脚面触球瞬间主动收力：数值越大传给球的速度越小，配合合适姿态可踢出贴网轻吊（过网慢、落点贴网）；0 为正常踢击。</div>
       </div>
     </details>
     <details class="grp" id="gMatch" open>
@@ -190,7 +190,7 @@ details .ctrl{margin-top:12px}
         <div><span>最高点</span><b id="sTop">—</b></div>
         <div><span>落点距网</span><b id="sLand">—</b></div>
         <div><span>飞行时间</span><b id="sTime">—</b></div>
-        <div class="score-box"><span>发球评分</span><b id="sScore">—</b></div>
+        <div class="score-box"><span>发球评分 <i id="sScoreTag" style="font-style:normal;font-size:10px;color:var(--sub)"></i></span><b id="sScore">—</b></div>
       </div>
     </div>
     <details class="grp" open>
@@ -198,11 +198,11 @@ details .ctrl{margin-top:12px}
       <div class="rule-box">
         <p>仅<b>界内有效球</b>计分；踩界 / 未示意发球等违例记 <b>0 分</b>，下网 / 出界 / 未过网不评分。</p>
         <table class="rule-tbl">
-          <tr><td>落点（45%）</td><td>贴网或贴对方<b>底线</b>两端高分，中场最低</td></tr>
-          <tr><td>过网速度（35%）</td><td>后场奖励<b>速度快</b>（有冲击力），前场奖励<b>速度慢</b>（贴网轻吊）——速度与落点匹配</td></tr>
-          <tr><td>贴网高度（20%）</td><td>球贴网顶而过更精准，高飞球扣分</td></tr>
+          <tr><td>落点（50%）</td><td>贴网或贴对方<b>底线</b>两端高分，中场最低</td></tr>
+          <tr><td>过网速度（25%）</td><td>前场约 <b>5</b>（贴网即落）、后场约 <b>12</b>（快有冲击力），速度与落点匹配</td></tr>
+          <tr><td>贴网高度（25%）</td><td>球贴网顶而过更精准，高飞球扣分</td></tr>
         </table>
-        <p class="rule-ref">参考：中场平庸球约 23 分；贴网轻吊约 74 分；贴底线后场约 64 分。</p>
+        <p class="rule-ref">参考：中场平庸球约 20–25 分；贴网前场约 84 分；平快贴底线后场约 90 分。</p>
       </div>
     </details>
     <details class="grp">
@@ -250,7 +250,7 @@ const CUR_COLOR = '#e8743b';
 const S = {
   mode:'idle', t:0, theta:0, beta:0, phi:PREP_PHI, omega:0,
   knee:{x:-0.60,y:0.60},            // 准备膝（θ=0：髋正下方，hipY-THIGH_L）
-  ball:{x:0,y:BALL_Y,vx:0,vy:0},
+  ball:{x:0.04,y:0.288,vx:0,vy:0},
   hit:false, trail:[], trails:[],
   netClear:null, apex:0, landed:null, flightT:0,
   netHit:false, footFault:false,
@@ -258,7 +258,9 @@ const S = {
   colorIdx:0, curColor:CUR_COLOR
 };
 const P = {angle:90, power:100,
-  hipX:-0.60, legAng:45, betaSet:90, ballRel:0.60, ballH:0.25, drag:0.6};
+  hipX:-0.60, legAng:45, betaSet:90, boardS:0.20, soft:0, drag:0.6};
+// 卸力系数：soft=0 正常踢击(=1)；soft=100 轻吊，只传递约 18% 速度
+function softFactor(){return 1 - P.soft/100*0.82;}
 // 实战模式状态
 const M={on:false, signaled:false, refReady:false, whistle:false,
   cards:0, penalty:0, violation:false};
@@ -277,11 +279,13 @@ function legPose(phi, angDeg, knee){
   const toe={x:ank.x+L2*d2.x, y:ank.y+L2*d2.y};
   return {d1,d2,nrm,ank,toe};
 }
-// 球的起始位置：高度固定，水平 = 膝盖 + 相对距离
+// 球的起始位置：贴在击球姿态脚面（木板）表面，boardS 为距脚踝沿木板的距离（0=踝→L2=脚尖）
 function ballStart(){
-  const k=kneeAt(0);                      // 准备姿态膝（大腿竖直）
-  // 球在 0.5m 正方形区域内：水平 ballRel、垂直 ballH（均由滑块设定）
-  return {x:k.x+P.ballRel, y:P.ballH, vx:0, vy:0};
+  const phi=(P.legAng-90+P.betaSet)*Math.PI/180;
+  const pose=legPose(phi,P.angle,kneeAt(P.legAng));
+  const p={x:pose.ank.x+P.boardS*pose.d2.x, y:pose.ank.y+P.boardS*pose.d2.y};
+  // 球心沿木板正面法向偏出一个半径，使球恰好贴在表面
+  return {x:p.x+pose.nrm.x*BR, y:p.y+pose.nrm.y*BR, vx:0, vy:0};
 }
 // 绕膝关节以角速度 w 转动时，世界点 p 的速度
 function pivotVel(p,w,k){return {x:-w*(p.y-k.y), y:w*(p.x-k.x)};}
@@ -312,13 +316,19 @@ function tryHit(){
   let rvx=S.ball.vx-vs.x, rvy=S.ball.vy-vs.y;
   const vn0=rvx*nx+rvy*ny, vt0=rvx*tx+rvy*ty;
   const vn1=-E_REST*vn0, vt1=(1-MU_FRIC)*vt0;
-  S.ball.vx=vs.x+vn1*nx+vt1*tx;
-  S.ball.vy=vs.y+vn1*ny+vt1*ty;
+  const f=softFactor();
+  S.ball.vx=(vs.x+vn1*nx+vt1*tx)*f;
+  S.ball.vy=(vs.y+vn1*ny+vt1*ty)*f;
   S.hit=true;
 }
 
 /* ================= 实时演算：预测出射速度（用于触球方向箭头） ================= */
+let _hitCache=null,_hitFrameReady=false;
 function predictHit(){
+  if(_hitFrameReady)return _hitCache;      // 同一帧内复用，避免重复扫描
+  _hitCache=_computeHit(); _hitFrameReady=true; return _hitCache;
+}
+function _computeHit(){
   const bx=S.ball.x, by=S.ball.y;
   const Tsw=SWING_T*(100/P.power);
   const N=1500;
@@ -337,8 +347,9 @@ function predictHit(){
       if(vs.x*nx+vs.y*ny>0){
         const vn0=(-vs.x)*nx+(-vs.y)*ny;
         const vt0=(-vs.x)*d2.x+(-vs.y)*d2.y;
-        const vx=vs.x+(-E_REST*vn0)*nx+(1-MU_FRIC)*vt0*d2.x;
-        const vy=vs.y+(-E_REST*vn0)*ny+(1-MU_FRIC)*vt0*d2.y;
+        const f=softFactor();
+        const vx=(vs.x+(-E_REST*vn0)*nx+(1-MU_FRIC)*vt0*d2.x)*f;
+        const vy=(vs.y+(-E_REST*vn0)*ny+(1-MU_FRIC)*vt0*d2.y)*f;
         return {vx,vy,c};
       }
     }
@@ -479,6 +490,18 @@ function updateMatchUI(){
 //  · 落点（45%）：贴网/贴底线两端高分、中场低
 //  · 过网速度（35%）：后场奖励快（有冲击力）、前场奖励慢（贴网轻吊）——好球=过网速度与落点匹配
 //  · 贴网高度（20%）：贴网顶而过更精准
+// 由弹道结果算分（实际发球与 idle 预测共用）
+function scoreFromResult(r){
+  const d=r.landed-NET_X;                    // 落点距网 0贴网~6.7贴底线
+  const t=d/6.7;                             // 前场0~后场1
+  const landX=Math.abs(d-3.35)/3.35;         // 两端=1、中场=0
+  const v=Math.max(0,Math.min(1,(r.netV-3)/10));   // 过网速度归一化：3慢~13快
+  // 理想速度随落点：前场约5（贴网即落，不苛求极慢）、后场约12（有冲击力）
+  const vIdeal=0.2+0.7*t;
+  const vMatch=Math.max(0,Math.min(1,1-Math.abs(v-vIdeal)*1.4));
+  const netH=Math.max(0,Math.min(1,1-(r.netClear||0)/1.0));
+  return Math.round(100*(0.50*landX+0.25*vMatch+0.25*netH));
+}
 function scoreServe(){
   const hit=S.hit0;
   if(!hit)return null;
@@ -486,13 +509,15 @@ function scoreServe(){
   S.netV=r.netV;
   if(r.netHit||!(r.landed>NET_X&&r.landed<=BASE_R))return null;
   if(S.footFault||M.violation)return 0;
-  const d=r.landed-NET_X;                    // 落点距网 0贴网~6.7贴底线
-  const t=d/6.7;                             // 前场0~后场1
-  const landX=Math.abs(d-3.35)/3.35;         // 两端=1、中场=0
-  const v=Math.max(0,Math.min(1,(r.netV-3)/10));   // 过网速度归一化：3慢~13快
-  const vMatch=t*v+(1-t)*(1-v);              // 后场快、前场慢均得高分
-  const netH=Math.max(0,Math.min(1,1-(r.netClear||0)/1.0));
-  return Math.round(100*(0.45*landX+0.35*vMatch+0.20*netH));
+  return scoreFromResult(r);
+}
+// idle 实时预测评分：拖滑块时就能看到当前参数能拿几分
+function predictScore(){
+  const hit=predictHit();
+  if(!hit)return null;
+  const r=simulateFlight(S.ball.x,S.ball.y,hit.vx,hit.vy,P.drag);
+  if(r.netHit||!(r.landed>NET_X&&r.landed<=BASE_R))return null;
+  return {score:scoreFromResult(r), netV:r.netV};
 }
 function finishServe(){
   let v,cls;
@@ -503,6 +528,9 @@ function finishServe(){
   else {v='界内 · 发球成功';cls='good';}
   // 评分（仅界内；违例/踩界为 0）
   S.score=scoreServe();
+  document.getElementById('sScoreTag').textContent='(实际)';
+  if(S.score!==null&&S.netV!==null)
+    document.getElementById('sNetV').textContent=S.netV.toFixed(1)+' m/s';
   setVerdict(v,cls);
   const color=S.curColor;
   S.trails.push({color,pts:S.trail.slice(),verdict:v,
@@ -600,6 +628,7 @@ window.addEventListener('resize',resize);
 
 /* ================= 绘制 ================= */
 function draw(){
+  _hitFrameReady=false;                   // 新帧：predictHit 重新扫描
   ctx.clearRect(0,0,W,H);
   ctx.fillStyle='#eef3f1';
   ctx.fillRect(cRect.x,cRect.y,cRect.w,cRect.h);   // 场景天空底
@@ -611,6 +640,15 @@ function draw(){
   if(S.trail.length) drawTrail({pts:S.trail,netClear:S.netClear,netHit:S.netHit,landed:S.landed},'#00000022',S.curColor);
   drawPredictTrail();
   drawLeg(); drawBall(); drawLabels();
+  // idle：实时预测分数与过网速度，便于拖滑块时直接探索高分
+  if(S.mode==='idle'){
+    const ps=predictScore();
+    const sc=document.getElementById('sScore'), tag=document.getElementById('sScoreTag'),
+          nv=document.getElementById('sNetV');
+    if(ps){sc.textContent=ps.score; tag.textContent='(预测)';
+      nv.textContent=ps.netV.toFixed(1)+' m/s';}
+    else{sc.textContent='—'; tag.textContent='(预测)'; nv.textContent='—';}
+  }
 }
 /* ================= 裁判（实战模式，卡通形象，站在网后） ================= */
 function drawRef(){
@@ -845,7 +883,7 @@ function bind(id,vid,fn,fmt){
 document.getElementById('rAngle').addEventListener('input',e=>{
   P.angle=+e.target.value;
   document.getElementById('vAngle').textContent=e.target.value+'°';
-  draw();
+  onBodyChange();
 });
 // 身体位置/球位变化：idle 时球跟随膝盖
 function onBodyChange(){ if(S.mode==='idle') S.ball=ballStart(); draw(); }
@@ -862,19 +900,15 @@ document.getElementById('rLegAng').addEventListener('input',e=>{
 document.getElementById('rBetaSet').addEventListener('input',e=>{
   P.betaSet=+e.target.value;
   document.getElementById('vBetaSet').textContent=e.target.value+'°';
-  draw();
-});
-document.getElementById('rBallRel').addEventListener('input',e=>{
-  P.ballRel=+e.target.value;
-  document.getElementById('vBallRel').textContent=(+e.target.value).toFixed(2)+' m';
   onBodyChange();
 });
-document.getElementById('rBallH').addEventListener('input',e=>{
-  P.ballH=+e.target.value;
-  document.getElementById('vBallH').textContent=(+e.target.value).toFixed(2)+' m';
+document.getElementById('rBoardS').addEventListener('input',e=>{
+  P.boardS=+e.target.value;
+  document.getElementById('vBoardS').textContent=(+e.target.value).toFixed(2)+' m';
   onBodyChange();
 });
 bind('rPower','vPower',v=>P.power=v,v=>v+'%');
+bind('rSoft','vSoft',v=>P.soft=v,v=>v+'%');
 bind('rDrag','vDrag',v=>P.drag=v,v=>v.toFixed(2));
 document.getElementById('btnFire').addEventListener('click',startServe);
 document.getElementById('btnReset').addEventListener('click',resetAll);
